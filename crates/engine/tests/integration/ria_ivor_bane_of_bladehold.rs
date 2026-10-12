@@ -35,12 +35,15 @@ use engine::game::scenario::{GameRunner, GameScenario, P0, P1};
 use engine::game::triggers::drain_order_triggers_with_identity;
 use engine::parser::oracle::parse_oracle_text;
 use engine::types::ability::{
-    AbilityDefinition, CombatDamageScope, DamageTargetFilter, DamageTargetPlayerScope, Effect,
-    ShieldKind, TargetFilter, TargetRef, TypedFilter,
+    AbilityDefinition, CombatDamageScope, DamageTargetFilter, DamageTargetPlayerScope, Duration,
+    Effect, EffectScope, PreventionAmount, PreventionScope, ShieldKind, TargetFilter, TargetRef,
+    TypedFilter,
 };
 use engine::types::actions::GameAction;
 use engine::types::card_type::CoreType;
-use engine::types::game_state::{CombatDamageAssignmentMode, TargetSelectionSlot, WaitingFor};
+use engine::types::game_state::{
+    CastPaymentMode, CombatDamageAssignmentMode, TargetSelectionSlot, WaitingFor,
+};
 use engine::types::identifiers::ObjectId;
 use engine::types::keywords::Keyword;
 use engine::types::phase::Phase;
@@ -606,4 +609,111 @@ fn ria_prevention_clause_is_an_honest_gap() {
             "static gap: {st:?}"
         );
     }
+}
+
+/// CR 601.2c + CR 115.10a + CR 609.7a: this typed primitive declares its
+/// creature damage source, while Player is an untargeted recipient scope.
+/// This synthetic fixture exercises the supported primitive, not Ria's
+/// unsupported Oracle clause or its prevented-damage token rider.
+#[test]
+fn source_scoped_player_prevention_cast_captures_only_the_creature_source() {
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+    let chosen = scenario
+        .add_creature(P0, "Chosen source", 4, 4)
+        .trample()
+        .id();
+    let other = scenario.add_creature(P0, "Other source", 2, 2).id();
+    let blocker = scenario.add_creature(P1, "Unshielded recipient", 1, 1).id();
+    let shield = scenario
+        .add_spell_to_hand(P0, "Source-scoped player prevention primitive", true)
+        .with_ability(Effect::PreventDamage {
+            amount: PreventionAmount::All,
+            amount_dynamic: None,
+            target: TargetFilter::Player,
+            recipient_scope: EffectScope::Single,
+            scope: PreventionScope::CombatDamage,
+            damage_source_filter: Some(TargetFilter::And {
+                filters: vec![
+                    TargetFilter::ParentTargetSlot { index: 0 },
+                    TargetFilter::Typed(TypedFilter::creature()),
+                ],
+            }),
+            prevention_duration: Some(Duration::UntilEndOfCombat),
+        })
+        .id();
+    let mut runner = scenario.build();
+    let card_id = runner.state().objects[&shield].card_id;
+    runner
+        .act(GameAction::CastSpell {
+            object_id: shield,
+            card_id,
+            targets: vec![],
+            payment_mode: CastPaymentMode::Auto,
+        })
+        .expect("the typed prevention spell starts casting");
+    let WaitingFor::TargetSelection { target_slots, .. } = &runner.state().waiting_for else {
+        panic!("reach guard: casting must request the damage source");
+    };
+    assert_eq!(target_slots.len(), 1, "the recipient is not another target");
+    assert!(target_slots[0]
+        .legal_targets
+        .contains(&TargetRef::Object(chosen)));
+    assert!(target_slots[0]
+        .legal_targets
+        .contains(&TargetRef::Object(other)));
+    assert!(target_slots[0].legal_targets.iter().all(|target| matches!(
+        target,
+        TargetRef::Object(id) if runner.state().objects[id].card_types.core_types.contains(&CoreType::Creature)
+    )));
+    runner
+        .act(GameAction::ChooseTarget {
+            target: Some(TargetRef::Object(chosen)),
+        })
+        .expect("the chosen source is accepted");
+    assert!(
+        matches!(runner.state().waiting_for, WaitingFor::Priority { .. }),
+        "the cast completes without a player-recipient prompt"
+    );
+    runner.advance_until_stack_empty();
+    assert!(
+        runner.state().stack.is_empty(),
+        "the prevention spell resolves"
+    );
+
+    let shields = one_shot_shields(&runner);
+    assert_eq!(
+        shields.len(),
+        1,
+        "reach guard: the source-scoped shield exists"
+    );
+    assert_eq!(shields[0].damage_source_filter, source_scoped(chosen));
+    assert_eq!(shields[0].combat_scope, Some(CombatDamageScope::CombatOnly));
+    assert_eq!(
+        shields[0].damage_target_filter,
+        Some(DamageTargetFilter::Player {
+            player: DamageTargetPlayerScope::Any,
+        })
+    );
+
+    let p1_life = runner.life(P1);
+    declare_combat(
+        &mut runner,
+        &[
+            (chosen, AttackTarget::Player(P1)),
+            (other, AttackTarget::Player(P1)),
+        ],
+        &[(blocker, chosen)],
+    );
+    finish_combat(&mut runner);
+    // CR 702.19b: the chosen trampler deals lethal to the blocker, whose
+    // recipient is outside Player, and its excess to P1 is shielded. The
+    // other creature's damage is outside the captured source and still lands.
+    assert_eq!(runner.state().objects[&blocker].zone, Zone::Graveyard);
+    assert_eq!(runner.state().objects[&chosen].damage_marked, 1);
+    assert_eq!(
+        runner.life(P1),
+        p1_life - 2,
+        "only the unchosen creature's two player damage is dealt"
+    );
 }
