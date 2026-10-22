@@ -56,11 +56,11 @@ use crate::types::ability::{
     DamageRedirectTarget, DamageTargetFilter, DamageTargetPlayerScope, DieRollIgnoreRule,
     DrawReplacementScope, Duration, Effect, EffectScope, FilterProp, LibraryInstructionActor,
     LibraryPosition, ManaModification, ManaReplacementScope, ManaSpendPermission,
-    PermissionGrantee, PlayerFilter, PreventionAmount, PreventionFormula, PreventionScope, QuantityExpr,
-    QuantityModification, QuantityRef, RedirectionLifetime, ReplacementChoiceAuthority,
-    ReplacementCondition, ReplacementDefinition, ReplacementMode, ReplacementPlayerScope,
-    RoundingMode, SourceExclusion, StaticCondition, StaticDefinition, TapStateChange, TargetFilter,
-    TriggerDefinition, TypeFilter, TypedFilter,
+    PermissionGrantee, PlayerFilter, PreventionAmount, PreventionFormula, PreventionScope,
+    QuantityExpr, QuantityModification, QuantityRef, RedirectionLifetime,
+    ReplacementChoiceAuthority, ReplacementCondition, ReplacementDefinition, ReplacementMode,
+    ReplacementPlayerScope, RoundingMode, SourceExclusion, StaticCondition, StaticDefinition,
+    TapStateChange, TargetFilter, TriggerDefinition, TypeFilter, TypedFilter,
 };
 use crate::types::ability::{CardPlayMode, CastingPermission, PlayerScope};
 use crate::types::ability_visit::{visit_ability_def_scoped, ResolutionScope};
@@ -9097,7 +9097,7 @@ fn parse_oneshot_target_source_prevent(norm_lower: &str, ctx: &ParseContext) -> 
         amount_dynamic: None,
         // CR 115.10a + CR 120.1: the recipient phrase ("to one or more players") is a SCOPE, not a target — the only declared target is the source (hosted by damage_source_filter's And, CR 115.1).
         target,
-        recipient_scope: crate::types::ability::EffectScope::Single,
+        recipient_scope: crate::types::ability::EffectScope::All,
         scope,
         damage_source_filter: Some(TargetFilter::And {
             filters: vec![
@@ -34627,6 +34627,7 @@ mod snapshot_tests {
         match effect {
             Effect::PreventDamage {
                 target,
+                recipient_scope,
                 scope,
                 damage_source_filter,
                 prevention_duration,
@@ -34637,6 +34638,7 @@ mod snapshot_tests {
                     TargetFilter::Player,
                     "CR 120.1: 'to one or more players' is the player recipient scope"
                 );
+                assert_eq!(recipient_scope, EffectScope::All);
                 assert_eq!(scope, crate::types::ability::PreventionScope::CombatDamage);
                 assert_eq!(
                     prevention_duration,

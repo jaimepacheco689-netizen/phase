@@ -631,7 +631,7 @@ fn source_scoped_player_prevention_cast_captures_only_the_creature_source() {
             amount: PreventionAmount::All,
             amount_dynamic: None,
             target: TargetFilter::Player,
-            recipient_scope: EffectScope::Single,
+            recipient_scope: EffectScope::All,
             scope: PreventionScope::CombatDamage,
             damage_source_filter: Some(TargetFilter::And {
                 filters: vec![
